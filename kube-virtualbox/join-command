@@ -1,0 +1,1 @@
+kubeadm join 192.168.56.10:6443 --token ginsio.a6bq7i8g3zb9d8px --discovery-token-ca-cert-hash sha256:3b329292affca068ec2c3490e58ca8218a543e0809002513cbe3b4af81f00793 

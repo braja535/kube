@@ -1,0 +1,185 @@
+---
+- hosts: all
+  become: true
+  tasks:
+  - name: Install packages that allow apt to be used over HTTPS
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+
+  - name: Add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+
+  - name: Install docker and its dependecies
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce 
+      - docker-ce-cli 
+      - containerd.io
+    notify:
+      - docker status
+
+  - name: Add vagrant user to docker group
+    user:
+      name: vagrant
+      group: docker
+
+#  Disable Swap
+  - name: Remove swapfile from /etc/fstab
+    mount:
+      name: "{{ item }}"
+      fstype: swap
+      state: absent
+    with_items:
+      - swap
+      - none
+
+  - name: Disable swap
+    command: swapoff -a
+    when: ansible_swaptotal_mb > 0
+
+ # Installing Kubelet Kubeadm and Kubectl
+  
+  - name: Add an apt signing key for Kubernetes
+    apt_key:
+      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+      state: present
+
+  - name: Adding apt repository for Kubernetes
+    apt_repository:
+      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+      filename: kubernetes.list
+
+  - name: Install Kubernetes binaries
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+        - kubelet 
+        - kubeadm 
+        - kubectl
+
+  - name: Configure node ip
+    lineinfile:
+      path: /etc/default/kubelet
+      line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
+      create: yes
+
+
+  - name: Restart kubelet
+    service:
+      name: kubelet
+      daemon_reload: yes
+      state: restarted
+
+# Initilize kube cluster 
+#
+  - name: Delete content
+    file:
+      state: absent
+      path: /etc/containerd/config.toml
+
+  - name: Restart service containerd, in all cases
+    service:
+      name: containerd
+      state: restarted
+
+  - name: Initialize the Kubernetes cluster using kubeadm
+    command: kubeadm init --apiserver-advertise-address="192.168.56.10" --apiserver-cert-extra-sans="192.168.56.10"  --node-name k8s-master --pod-network-cidr=192.168.0.0/16
+
+
+# setup kube config file for vagrant user 
+  - name: Setup kubeconfig for vagrant user
+    command: "{{ item }}"
+    with_items:
+     - mkdir -p /home/vagrant/.kube
+     - cp -i /etc/kubernetes/admin.conf /home/vagrant/.kube/config
+     - chown vagrant:vagrant /home/vagrant/.kube/config
+
+  - name: Create local home directory for kubernetes
+    delegate_to: localhost
+    file:
+      path: "{{ item }}"
+      state: directory
+    with_items:
+      - /home/raja/.kube
+    become: false
+    
+            
+  - name: Fetch the file from 
+    run_once: yes
+    fetch: src=/home/vagrant/.kube/config dest="/home/raja/.kube/config" flat=yes
+    become: false
+
+  # - name: Chown the filename
+  #   command: chown $(id -u):$(id -g) /home/raja/.kube/config
+  #   become: false
+
+  - name: Install calico pod network
+    become: false
+    command: kubectl create -f https://projectcalico.docs.tigera.io/manifests/calico.yaml
+    #command: kubectl create -f https://docs.projectcalico.org/v3.4/getting-started/kubernetes/installation/hosted/calico.yaml
+
+
+  - name: Generate join command
+    command: kubeadm token create --print-join-command
+    register: join_command
+
+  - name: Copy join command to local file
+    local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"
+    become: false
+
+  - name: Install kubernetes dashboard 
+    become: false
+    command: kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.6.1/aio/deploy/recommended.yaml
+ 
+  - name: Copy the file from source to the servers
+    copy: src=templates/admin-user.yml dest=/tmp/
+
+  - name: Install kubernetes dashboard admin-user
+    become: false
+    command: kubectl apply -f /tmp/admin-user.yml
+
+  - name: Copy cluster-binding role yml file
+    copy: src=templates/admin-cluster-role-binding.yml dest=/tmp/
+
+  - name: Install cluser-binding role 
+    become: false
+    command: kubectl apply -f /tmp/admin-cluster-role-binding.yml
+  
+    #  - name: run kube-proxy command in background
+    #become: false
+    #delegate_to: localhost
+    #shell: nohup kubectl proxy --address='0.0.0.0' --port=8001 --accept-hosts='.*' </dev/null  >/dev/null 2>&1 &
+    #command: kubectl proxy --address='0.0.0.0' --port=8001 --accept-hosts='.*' &
+ 
+    #  - name: run kube-proxy command in background
+    #become: false
+    #delegate_to: localhost
+    #shell: nohup xdg-open "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/#/ingress?namespace=default" </dev/null  >/dev/null 2>&1 &
+
+  handlers:
+    - name: docker status
+      service: name=docker state=started

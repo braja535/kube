@@ -109,6 +109,38 @@
   - name: Join the node to cluster
     command: sh /tmp/join-command.sh
 
+  - name: run kube-proxy command in background
+    become: false
+    delegate_to: localhost
+    shell: kubectl -n kubernetes-dashboard create token admin-user
+    run_once: true
+    when: inventory_hostname == "node-2"
+
+  - name: Secret token to to-be copy
+    become: false
+    delegate_to: localhost
+    shell: kubectl -n kubernetes-dashboard create token admin-user
+    when: inventory_hostname == "node-2"
+    register: secret_output
+
+  - debug:
+      var: secret_output.stdout
+
+  - name: run kube-proxy command in background
+    become: false
+    delegate_to: localhost
+    shell: nohup kubectl proxy --address='0.0.0.0' --port=8001 --accept-hosts='.*' --kubeconfig=/home/raja/.kube/config --v=2   >/tmp/proxy_host 2>&1 &
+    run_once: true
+    when: inventory_hostname == "node-2"
+
+ 
+  - name: run kube-proxy command in background
+    become: false
+    delegate_to: localhost
+    shell: nohup xdg-open "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/#/ingress?namespace=default" </dev/null  >/dev/null 2>&1 &
+    run_once: true
+    when: inventory_hostname == "node-2"
+
   handlers:
     - name: docker status
       service: name=docker state=started

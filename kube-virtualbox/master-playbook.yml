@@ -118,6 +118,24 @@
      - cp -i /etc/kubernetes/admin.conf /home/vagrant/.kube/config
      - chown vagrant:vagrant /home/vagrant/.kube/config
 
+  - name: Create local home directory for kubernetes
+    delegate_to: localhost
+    file:
+      path: "{{ item }}"
+      state: directory
+    with_items:
+      - /home/raja/.kube
+    become: false
+    
+            
+  - name: Fetch the file from 
+    run_once: yes
+    fetch: src=/home/vagrant/.kube/config dest="/home/raja/.kube/config" flat=yes
+    become: false
+
+  # - name: Chown the filename
+  #   command: chown $(id -u):$(id -g) /home/raja/.kube/config
+  #   become: false
 
   - name: Install calico pod network
     become: false
@@ -132,6 +150,35 @@
   - name: Copy join command to local file
     local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"
     become: false
+
+  - name: Install kubernetes dashboard 
+    become: false
+    command: kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.6.1/aio/deploy/recommended.yaml
+ 
+  - name: Copy the file from source to the servers
+    copy: src=templates/admin-user.yml dest=/tmp/
+
+  - name: Install kubernetes dashboard admin-user
+    become: false
+    command: kubectl apply -f /tmp/admin-user.yml
+
+  - name: Copy cluster-binding role yml file
+    copy: src=templates/admin-cluster-role-binding.yml dest=/tmp/
+
+  - name: Install cluser-binding role 
+    become: false
+    command: kubectl apply -f /tmp/admin-cluster-role-binding.yml
+  
+    #  - name: run kube-proxy command in background
+    #become: false
+    #delegate_to: localhost
+    #shell: nohup kubectl proxy --address='0.0.0.0' --port=8001 --accept-hosts='.*' </dev/null  >/dev/null 2>&1 &
+    #command: kubectl proxy --address='0.0.0.0' --port=8001 --accept-hosts='.*' &
+ 
+    #  - name: run kube-proxy command in background
+    #become: false
+    #delegate_to: localhost
+    #shell: nohup xdg-open "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/#/ingress?namespace=default" </dev/null  >/dev/null 2>&1 &
 
   handlers:
     - name: docker status
